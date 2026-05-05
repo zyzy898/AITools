@@ -581,6 +581,11 @@ def main():
     parser.add_argument('--no-llm', action='store_true', help='禁用LLM智能分析')
     
     args = parser.parse_args()
+
+    print("=" * 60)
+    print("抖音视频下载器")
+    print("=" * 60)
+    print(f"输入: {args.url}")
     
     # 检查LLM配置
     llm = LLMAnalyzer()
@@ -595,10 +600,12 @@ def main():
     success = asyncio.run(downloader.download(args.url, args.output))
     
     if success:
-        print("\n[SUCCESS] 下载完成！")
+        print("-" * 60)
+        print(f"[OK] 下载完成!")
         sys.exit(0)
     else:
-        print("\n[FAILED] 下载失败")
+        print("-" * 60)
+        print("[FAIL] 下载失败")
         sys.exit(1)
 
 

@@ -34,9 +34,9 @@ from typing import Optional, Dict, Any, List
 
 # ==================== LLM 配置 ====================
 # 请在这里填写你的LLM API配置
-LLM_API_KEY = ""  # 替换为你的API密钥
-LLM_BASE_URL = ""  # 替换为你的API基础URL
-LLM_MODEL = ""  # 替换为你的模型名称
+LLM_API_KEY = "ark-bbde0748-5235-4b09-88a7-00b599d73c34-74f2d"  # 替换为你的API密钥
+LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 替换为你的API基础URL
+LLM_MODEL = "doubao-seed-2-0-lite-260215" # 替换为你的模型名称
 # ==================================================
 
 REQUIRED_FIELDS = frozenset({
@@ -82,13 +82,13 @@ def extract_url_from_text(text):
     if match:
         return match.group(0)
     # 匹配 www.xiaohongshu.com 链接
-    match = re.search(r'https?://www\.xiaohongshu\.com/explore/[^\s]+', text)
+    match = re.search(r'https?://www\.xiaohongshu\.com/(explore|discovery/item)/[^\s]+', text)
     if match:
         return match.group(0)
     # 匹配笔记ID直接构建链接
-    match = re.search(r'explore/([a-f0-9]+)', text)
+    match = re.search(r'(explore|discovery/item)/([a-f0-9]+)', text)
     if match:
-        return f"https://www.xiaohongshu.com/explore/{match.group(1)}"
+        return f"https://www.xiaohongshu.com/explore/{match.group(2)}"
     return None
 
 
