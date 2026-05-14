@@ -1,0 +1,5 @@
+torch
+transformers
+pymilvus>=2.3.0
+numpy
+requests
