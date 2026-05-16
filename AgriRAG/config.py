@@ -11,7 +11,7 @@ COLLECTION_NAME = "agriculture_knowledge"
 
 # Embedding 模型
 EMBEDDING_MODEL_PATH = os.path.join(BASE_DIR, "Qwen3-Embedding-0.6B")
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 1024
 
 # LLM 配置
 LLM_MODE = os.environ.get("LLM_MODE", "api")  # "local" 或 "api"
