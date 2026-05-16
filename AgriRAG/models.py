@@ -21,7 +21,7 @@ def load_embedding_model():
             )
             embedding_model = AutoModel.from_pretrained(
                 model_path, trust_remote_code=True
-            )
+            ).to("cuda:0")
             embedding_model.eval()
         except OSError as e:
             print(f"\n[错误] Embedding 模型加载失败")
@@ -38,6 +38,7 @@ def load_embedding_model():
 def encode_texts(texts, batch_size=32):
     """分批编码文本，带进度提示，避免大量文本时 OOM"""
     model, tokenizer = load_embedding_model()
+    device = next(model.parameters()).device
     all_embeddings = []
     total_batches = (len(texts) + batch_size - 1) // batch_size
 
@@ -51,10 +52,11 @@ def encode_texts(texts, batch_size=32):
 
         with torch.no_grad():
             inputs = tokenizer(batch, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
             outputs = model(**inputs)
             embeddings = outputs.last_hidden_state[:, 0]
             embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-            all_embeddings.append(embeddings.cpu().numpy())
+            all_embeddings.append(embeddings.cpu().float().numpy())
 
     if total_batches > 1:
         print()  # 换行
@@ -73,9 +75,8 @@ def load_llm_model():
             llm_model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 torch_dtype=torch.float16,
-                device_map="auto",
                 trust_remote_code=True
-            )
+            ).to("cuda:0")
             llm_model.eval()
         except OSError as e:
             print(f"\n[错误] LLM 模型加载失败")
