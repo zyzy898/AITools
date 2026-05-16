@@ -21,7 +21,7 @@
 
 - **RAG 检索增强生成**：将外部知识库与大模型结合，解决 LLM 幻觉和知识时效性问题
 - **向量数据库 Milvus**：高性能向量存储与 ANN 近似最近邻检索，支持 COSINE 相似度
-- **BGE Embedding 模型**：使用 `bge-base-zh-v1.5` 中文语义向量化，768 维稠密表示
+- **BGE Embedding 模型**：使用 `Qwen3-Embedding-0.6B` 中文语义向量化，768 维稠密表示
 - **滑动窗口文本切分**：带 overlap 的分块策略，保证语义连贯性，避免信息断裂
 - **内容哈希去重**：基于 MD5 的确定性 ID 生成，支持增量入库不重复
 - **相似度阈值过滤**：检索结果低于阈值自动丢弃，减少噪声对生成质量的影响
@@ -41,7 +41,7 @@ AgriRAG/
 ├── requirements.txt       # Python 依赖
 ├── database_dir/          # 知识库文档目录
 │   └── 农业/txt/          # 农业领域知识文本
-└── bge-base-zh-v1.5/      # Embedding 模型（本地部署）
+└── Qwen3-Embedding-0.6B/      # Embedding 模型（本地部署）
 ```
 
 ## 环境要求

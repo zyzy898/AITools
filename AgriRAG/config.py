@@ -3,14 +3,14 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Milvus 配置（支持环境变量覆盖）
-MILVUS_HOST = os.environ.get("MILVUS_HOST", "11.253.265.160")
+MILVUS_HOST = os.environ.get("MILVUS_HOST", "127.0.0.1")
 MILVUS_PORT = int(os.environ.get("MILVUS_PORT", 19530))
 MILVUS_URI = f"http://{MILVUS_HOST}:{MILVUS_PORT}"
 
 COLLECTION_NAME = "agriculture_knowledge"
 
 # Embedding 模型
-EMBEDDING_MODEL_PATH = os.path.join(BASE_DIR, "bge-base-zh-v1.5")
+EMBEDDING_MODEL_PATH = os.path.join(BASE_DIR, "Qwen3-Embedding-0.6B")
 EMBEDDING_DIM = 768
 
 # LLM 配置
