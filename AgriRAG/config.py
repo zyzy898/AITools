@@ -14,10 +14,10 @@ EMBEDDING_MODEL_PATH = os.path.join(BASE_DIR, "Qwen3-Embedding-0.6B")
 EMBEDDING_DIM = 1024
 
 # LLM 配置
-LLM_MODE = os.environ.get("LLM_MODE", "api")  # "local" 或 "api"
+LLM_MODE = os.environ.get("LLM_MODE", "local")  # "local" 或 "api"
 
 # 本地模型配置
-LLM_MODEL_PATH = os.path.join(BASE_DIR, "llama-model")
+LLM_MODEL_PATH = os.path.join(BASE_DIR, "LLM", "Qwen3.5-0.8B")
 LLM_MAX_LENGTH = 512
 LLM_TOP_P = 0.9
 LLM_TOP_K = 40
