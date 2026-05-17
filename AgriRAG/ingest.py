@@ -6,24 +6,82 @@ import models
 import milvus_client
 
 
-def chunk_text(text, chunk_size=300, overlap=50):
-    """滑动窗口切分文本，保证 overlap 生效"""
-    text = re.sub(r'\n+', '\n', text).strip()
+def chunk_text(text, chunk_size=512, overlap=64):
+    """动态切割：递归按段落→句子→子句边界切分，避免截断语义"""
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
     if not text:
         return []
     if len(text) <= chunk_size:
         return [text]
 
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start = end - overlap
+    separators = ["\n\n", "\n", "。", "！", "？", "；", "：", "，", "、", " ", ""]
+    splits = _recursive_split(text, separators, chunk_size)
+    return _merge_with_overlap(splits, chunk_size, overlap)
 
-    return chunks
+
+def _recursive_split(text, separators, chunk_size):
+    """递归切分：尝试用当前分隔符切分，超长部分递归用下一级分隔符"""
+    if not separators:
+        return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+    sep = separators[0]
+    if sep and sep not in text:
+        return _recursive_split(text, separators[1:], chunk_size)
+
+    if not sep:
+        return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+    parts = text.split(sep)
+    result = []
+    current = ""
+
+    for part in parts:
+        if not part:
+            continue
+        candidate = (current + sep + part) if current else part
+        if len(candidate) <= chunk_size:
+            current = candidate
+        else:
+            if current:
+                result.append(current)
+            if len(part) <= chunk_size:
+                current = part
+            else:
+                result.extend(_recursive_split(part, separators[1:], chunk_size))
+                current = ""
+
+    if current:
+        result.append(current)
+
+    return result
+
+
+def _merge_with_overlap(splits, chunk_size, overlap):
+    """合并过短的相邻片段，并在相邻块之间添加重叠"""
+    if not splits:
+        return []
+
+    merged = []
+    current = splits[0]
+    for i in range(1, len(splits)):
+        nxt = splits[i]
+        if len(current) + len(nxt) + 1 <= chunk_size:
+            current += "\n" + nxt
+        else:
+            merged.append(current)
+            current = nxt
+    merged.append(current)
+
+    if overlap <= 0 or len(merged) <= 1:
+        return merged
+
+    overlapped = [merged[0]]
+    for i in range(1, len(merged)):
+        prev = merged[i - 1]
+        prefix = prev[-overlap:] if len(prev) > overlap else prev
+        overlapped.append(prefix + "\n" + merged[i])
+
+    return overlapped
 
 
 def load_knowledge_files():
