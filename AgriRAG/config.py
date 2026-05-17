@@ -24,9 +24,9 @@ LLM_TOP_K = 40
 LLM_TEMPERATURE = 0.7
 
 # API 模式配置（兼容 OpenAI 接口格式）
-LLM_API_URL = os.environ.get("LLM_API_URL", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "ark-bbde0748-5235-4b09-88a7-00b599d73c34-74f2d")
-LLM_API_MODEL = os.environ.get("LLM_API_MODEL", "doubao-seed-1-8-251228")
+LLM_API_URL = os.environ.get("LLM_API_URL", "")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_API_MODEL = os.environ.get("LLM_API_MODEL", "")
 LLM_API_STREAM = True  # API 模式是否启用流式输出
 
 # 知识库
