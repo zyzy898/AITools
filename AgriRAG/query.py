@@ -1,8 +1,13 @@
 import sys
+import os
 import time
 import config
 import models
 import milvus_client
+
+if sys.platform == "win32":
+    os.system("chcp 65001 > nul")  # 设置终端为 UTF-8 编码
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def retrieve_context(question, top_k=None, show_score=True):

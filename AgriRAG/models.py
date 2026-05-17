@@ -112,6 +112,10 @@ def generate_answer_api(prompt):
     """使用 OpenAI 兼容 API 生成答案，支持流式输出"""
     import requests
 
+    url = config.LLM_API_URL
+    if "/chat/completions" not in url:
+        url = url.rstrip("/") + "/chat/completions"
+
     headers = {"Content-Type": "application/json"}
     if config.LLM_API_KEY:
         headers["Authorization"] = f"Bearer {config.LLM_API_KEY}"
@@ -128,11 +132,15 @@ def generate_answer_api(prompt):
     }
 
     try:
-        resp = requests.post(config.LLM_API_URL, json=payload, headers=headers, timeout=60, stream=stream)
+        resp = requests.post(url, json=payload, headers=headers, timeout=60, stream=stream)
         resp.raise_for_status()
+        resp.encoding = "utf-8"  # 确保流式读取时以 UTF-8 解码中文内容
 
         if stream:
-            return _handle_stream_response(resp)
+            content = _handle_stream_response(resp)
+            if not content:
+                return "[错误] API 返回空内容，请检查 API_KEY 或模型配置是否正确"
+            return content
         else:
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
@@ -148,9 +156,11 @@ def generate_answer_api(prompt):
 def _handle_stream_response(resp):
     """处理 SSE 流式响应，逐字打印并返回完整文本"""
     full_content = ""
+    line_count = 0
     for line in resp.iter_lines(decode_unicode=True):
         if not line:
             continue
+        line_count += 1
         if line.startswith("data: "):
             data_str = line[6:]
             if data_str.strip() == "[DONE]":
@@ -165,7 +175,19 @@ def _handle_stream_response(resp):
                     full_content += content
             except json.JSONDecodeError:
                 continue
-    print()  # 流式结束后换行
+        elif line.startswith("{"):
+            try:
+                data = json.loads(line)
+                delta = data.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
+                    full_content += content
+            except json.JSONDecodeError:
+                continue
+    if full_content:
+        print()  # 流式结束后换行
     return full_content
 
 
