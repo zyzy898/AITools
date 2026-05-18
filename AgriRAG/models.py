@@ -1,14 +1,14 @@
 import sys
 import json
+import requests
 import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModel
 import config
 
 embedding_model = None
 embedding_tokenizer = None
-llm_model = None
-llm_tokenizer = None
+reranker_model = None
 
 
 def load_embedding_model():
@@ -51,7 +51,7 @@ def encode_texts(texts, batch_size=32):
             print(f"\r{progress}", end="", flush=True)
 
         with torch.no_grad():
-            inputs = tokenizer(batch, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            inputs = tokenizer(batch, padding=True, truncation=True, max_length=1024, return_tensors="pt")
             inputs = {k: v.to(device) for k, v in inputs.items()}
             outputs = model(**inputs)
             embeddings = outputs.last_hidden_state[:, 0]
@@ -59,59 +59,13 @@ def encode_texts(texts, batch_size=32):
             all_embeddings.append(embeddings.cpu().float().numpy())
 
     if total_batches > 1:
-        print()  # 换行
+        print()
 
     return np.concatenate(all_embeddings, axis=0)
 
 
-def load_llm_model():
-    global llm_model, llm_tokenizer
-    if llm_model is None:
-        model_path = config.LLM_MODEL_PATH
-        try:
-            llm_tokenizer = AutoTokenizer.from_pretrained(
-                model_path, trust_remote_code=True
-            )
-            llm_model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch.float16,
-                trust_remote_code=True
-            ).to("cuda:0")
-            llm_model.eval()
-        except OSError as e:
-            print(f"\n[错误] LLM 模型加载失败")
-            print(f"  路径: {model_path}")
-            print(f"  原因: {e}")
-            print(f"  请检查模型文件是否完整，或路径是否正确")
-            raise SystemExit(1)
-        except Exception as e:
-            print(f"\n[错误] LLM 模型加载异常: {e}")
-            raise SystemExit(1)
-    return llm_model, llm_tokenizer
-
-
-def generate_answer_local(prompt):
-    """使用本地模型生成答案"""
-    model, tokenizer = load_llm_model()
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        outputs = model.generate(
-            inputs.input_ids,
-            max_new_tokens=config.LLM_MAX_LENGTH,
-            top_p=config.LLM_TOP_P,
-            top_k=config.LLM_TOP_K,
-            temperature=config.LLM_TEMPERATURE,
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
-        )
-    response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-    return response
-
-
-def generate_answer_api(prompt):
-    """使用 OpenAI 兼容 API 生成答案，支持流式输出"""
-    import requests
-
+def call_llm_api(system_prompt, user_prompt, temperature=None, max_tokens=None, stream=False):
+    """通用 LLM API 调用，支持自定义 system/user prompt，失败时抛出异常"""
     url = config.LLM_API_URL
     if "/chat/completions" not in url:
         url = url.rstrip("/") + "/chat/completions"
@@ -120,31 +74,44 @@ def generate_answer_api(prompt):
     if config.LLM_API_KEY:
         headers["Authorization"] = f"Bearer {config.LLM_API_KEY}"
 
-    stream = config.LLM_API_STREAM
+    if temperature is None:
+        temperature = config.LLM_TEMPERATURE
+    if max_tokens is None:
+        max_tokens = config.LLM_MAX_TOKENS
 
     payload = {
         "model": config.LLM_API_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": config.LLM_TEMPERATURE,
-        "top_p": config.LLM_TOP_P,
-        "max_tokens": config.LLM_MAX_LENGTH,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
         "stream": stream,
     }
 
+    resp = requests.post(url, json=payload, headers=headers, timeout=300, stream=stream)
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+
+    if stream:
+        content = _handle_stream_response(resp)
+        if not content:
+            raise RuntimeError("API 返回空内容，请检查 API_KEY 或模型配置")
+        return content
+    else:
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+
+def generate_answer(prompt):
+    """使用 LLM API 生成答案（供 query.py 调用，流式输出并带有友好错误提示）"""
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=60, stream=stream)
-        resp.raise_for_status()
-        resp.encoding = "utf-8"  # 确保流式读取时以 UTF-8 解码中文内容
-
-        if stream:
-            content = _handle_stream_response(resp)
-            if not content:
-                return "[错误] API 返回空内容，请检查 API_KEY 或模型配置是否正确"
-            return content
-        else:
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-
+        return call_llm_api(
+            system_prompt=config.SYSTEM_PROMPT,
+            user_prompt=prompt,
+            stream=config.LLM_API_STREAM
+        )
     except requests.exceptions.ConnectionError:
         return "[错误] 无法连接到 LLM API，请检查 LLM_API_URL 配置"
     except requests.exceptions.Timeout:
@@ -156,11 +123,9 @@ def generate_answer_api(prompt):
 def _handle_stream_response(resp):
     """处理 SSE 流式响应，逐字打印并返回完整文本"""
     full_content = ""
-    line_count = 0
     for line in resp.iter_lines(decode_unicode=True):
         if not line:
             continue
-        line_count += 1
         if line.startswith("data: "):
             data_str = line[6:]
             if data_str.strip() == "[DONE]":
@@ -187,13 +152,53 @@ def _handle_stream_response(resp):
             except json.JSONDecodeError:
                 continue
     if full_content:
-        print()  # 流式结束后换行
+        print()
     return full_content
 
 
-def generate_answer(prompt):
-    """根据配置选择本地模型或 API 生成答案"""
-    if config.LLM_MODE == "api":
-        return generate_answer_api(prompt)
-    else:
-        return generate_answer_local(prompt)
+def load_reranker():
+    """加载 Cross-Encoder reranker 模型"""
+    global reranker_model
+    if reranker_model is None:
+        from sentence_transformers import CrossEncoder
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        reranker_model = CrossEncoder(
+            config.RERANK_MODEL_NAME,
+            max_length=512,
+            device=device
+        )
+    return reranker_model
+
+
+def rerank(query, documents, top_k=None):
+    """使用 Cross-Encoder 对检索结果重新排序
+
+    Args:
+        query: 用户查询字符串
+        documents: 初检结果列表，每项为 {"text": str, "source": str, "score": float}
+        top_k: 重排序后保留的数量，默认使用 config.TOP_K
+
+    Returns:
+        重排序后的结果列表（score 字段更新为 reranker 分数）
+    """
+    if not documents:
+        return documents
+
+    if top_k is None:
+        top_k = config.TOP_K
+
+    model = load_reranker()
+    texts = [doc["text"] for doc in documents]
+    pairs = [[query, text] for text in texts]
+
+    scores = model.predict(pairs, batch_size=config.RERANK_BATCH_SIZE, show_progress_bar=False)
+
+    ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+    top_k = min(top_k, len(ranked))
+
+    result = []
+    for doc, score in ranked[:top_k]:
+        doc["score"] = float(score)
+        result.append(doc)
+
+    return result
