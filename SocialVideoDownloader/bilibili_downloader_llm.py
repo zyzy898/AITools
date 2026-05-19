@@ -34,9 +34,9 @@ from urllib.parse import unquote
 
 # ==================== LLM 配置 ====================
 # 请在这里填写你的LLM API配置
-LLM_API_KEY = "ark-bbde0748-5235-4b09-88a7-00b599d73c34-74f2d"  # 替换为你的API密钥
-LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 替换为你的API基础URL
-LLM_MODEL = "doubao-seed-2-0-lite-260215"  # 替换为你的模型名称
+LLM_API_KEY = ""  # 替换为你的API密钥
+LLM_BASE_URL = ""  # 替换为你的API基础URL
+LLM_MODEL = ""  # 替换为你的模型名称
 # ==================================================
 
 

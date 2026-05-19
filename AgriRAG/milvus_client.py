@@ -20,7 +20,7 @@ def get_client():
 
 
 def create_collection():
-    """创建 collection（已存在则跳过，不会删除旧数据）"""
+    """创建双字段 collection（text1=短摘要嵌入用，text2=长摘要返回LLM用）"""
     client = get_client()
     if client.has_collection(config.COLLECTION_NAME):
         print(f"Collection '{config.COLLECTION_NAME}' 已存在，跳过创建")
@@ -28,7 +28,8 @@ def create_collection():
 
     schema = CollectionSchema([
         FieldSchema("id", DataType.VARCHAR, is_primary=True, max_length=64),
-        FieldSchema("text", DataType.VARCHAR, max_length=4096),
+        FieldSchema("text1", DataType.VARCHAR, max_length=4096),
+        FieldSchema("text2", DataType.VARCHAR, max_length=18196),
         FieldSchema("source", DataType.VARCHAR, max_length=256),
         FieldSchema("emb", DataType.FLOAT_VECTOR, dim=config.EMBEDDING_DIM)
     ])
@@ -44,7 +45,7 @@ def create_collection():
     )
     client.create_index(config.COLLECTION_NAME, index_params)
     client.load_collection(config.COLLECTION_NAME)
-    print(f"Collection '{config.COLLECTION_NAME}' 创建成功")
+    print(f"Collection '{config.COLLECTION_NAME}' 创建成功 (双字段 text1+text2)")
     return True
 
 
@@ -57,14 +58,14 @@ def reset_collection():
     return create_collection()
 
 
-def _make_doc_id(text, source):
-    """根据文本内容和来源生成确定性 ID，用于去重"""
-    content = f"{source}:{text}"
+def _make_doc_id(text1, source):
+    """根据 text1 和来源生成确定性 ID，用于去重"""
+    content = f"{source}:{text1}"
     return hashlib.md5(content.encode("utf-8")).hexdigest()
 
 
 def insert_documents(documents):
-    """插入文档，基于内容哈希去重，相同内容不会重复入库"""
+    """插入文档（text1=短摘要嵌入，text2=长摘要内容），基于内容哈希去重"""
     client = get_client()
     if not client.has_collection(config.COLLECTION_NAME):
         create_collection()
@@ -72,15 +73,16 @@ def insert_documents(documents):
     data = []
     skipped = 0
     for doc in documents:
-        doc_id = _make_doc_id(doc["text"], doc.get("source", "unknown"))
-        # 检查是否已存在
+        text1 = doc.get("text1", doc.get("text", ""))
+        doc_id = _make_doc_id(text1, doc.get("source", "unknown"))
         existing = client.get(config.COLLECTION_NAME, ids=[doc_id])
         if existing:
             skipped += 1
             continue
         data.append({
             "id": doc_id,
-            "text": doc["text"],
+            "text1": text1,
+            "text2": doc.get("text2", doc.get("text", "")),
             "source": doc.get("source", "unknown"),
             "emb": doc["embedding"]
         })
@@ -96,7 +98,7 @@ def insert_documents(documents):
 
 
 def search_vectors(query_vector, top_k=None):
-    """检索相似向量，返回结果包含相似度分数"""
+    """检索相似向量，返回 text1（短摘要）、text2（长内容）和 source"""
     if top_k is None:
         top_k = config.TOP_K
 
@@ -108,19 +110,25 @@ def search_vectors(query_vector, top_k=None):
     results = client.search(
         config.COLLECTION_NAME,
         [query_vector],
-        output_fields=["text", "source"],
+        output_fields=["text1", "text2", "source"],
         limit=top_k
     )
 
     if not results:
         return []
 
-    # 整理结果，附带相似度分数
     formatted = []
     for hit in results[0]:
+        entity = hit.get("entity", {})
+        text1 = entity.get("text1", "")
+        text2 = entity.get("text2", "")
+        # text1 太短时用 text2 作为展示内容
+        display_text = text2 if len(text1) < 50 else text1
         formatted.append({
-            "text": hit.get("entity", {}).get("text", ""),
-            "source": hit.get("entity", {}).get("source", ""),
+            "text1": text1,
+            "text2": text2,
+            "text": display_text,
+            "source": entity.get("source", ""),
             "score": hit.get("distance", 0.0),
         })
     return formatted

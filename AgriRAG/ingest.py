@@ -1,10 +1,8 @@
 import os
-import re
 import argparse
 import config
 import models
 import milvus_client
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 SUMMARY_BATCH_SIZE = 10000    # 每批输入字符数
 SUMMARY_BATCH_OVERLAP = 300   # 相邻批次重叠字符数（防止断句丢失上下文）
@@ -12,7 +10,6 @@ SKIP_SHORT_THRESHOLD = 3000   # 短于此字符数的文档跳过摘要生成
 
 
 def call_summary_llm(system_prompt, user_prompt, max_tokens=1024):
-    """调用 LLM 生成摘要，失败时返回空字符串"""
     try:
         return models.call_llm_api(
             system_prompt=system_prompt,
@@ -27,7 +24,6 @@ def call_summary_llm(system_prompt, user_prompt, max_tokens=1024):
 
 
 def split_text_batches(text, batch_size, overlap):
-    """将文本按固定大小分批次，相邻批次有 overlap 字符重叠"""
     batches = []
     start = 0
     while start < len(text):
@@ -39,8 +35,8 @@ def split_text_batches(text, batch_size, overlap):
     return batches
 
 
-def summarize_batch(text_batch, source_name, batch_idx, total_batches):
-    """为单个文本批次生成短摘要和长摘要，返回合并后的摘要文本"""
+def summarize_batch(text_batch, batch_idx, total_batches):
+    """为单个文本批次生成短摘要（text1）和长摘要（text2），分别返回"""
     batch_label = f"第{batch_idx}/{total_batches}部分" if total_batches > 1 else ""
 
     system_short = "你是一个农业知识摘要引擎。只输出摘要文本本身，禁止任何前缀、后缀、解释或客套话。"
@@ -62,96 +58,13 @@ def summarize_batch(text_batch, source_name, batch_idx, total_batches):
     )
     long = call_summary_llm(system_long, user_long, max_tokens=1536)
 
-    if short and long:
-        return f"{short}\n\n{long}"
-    return short or long or ""
-
-
-def split_by_sections(text):
-    """按章节标题（如 1.1 根系特征、4.1.1 叶斑病）分段，保持每个知识点完整"""
-    pattern = r'^\d+\.\d+(?:\.\d+)*\s*\S'
-    matches = list(re.finditer(pattern, text, flags=re.MULTILINE))
-    if not matches:
-        return [text.strip()] if text.strip() else []
-
-    sections = []
-    for i, m in enumerate(matches):
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        section = text[start:end].strip()
-        if section:
-            sections.append(section)
-
-    if matches and matches[0].start() > 0:
-        prefix = text[:matches[0].start()].strip()
-        if prefix:
-            sections.insert(0, prefix)
-
-    return sections
-
-
-def chunk_with_langchain(text):
-    """
-    先按章节标题分段，自动追踪层级关系，为子章节补充父章节名称，
-    再用 LangChain 切割过长段落。保证每个块都带有完整的上下文标识。
-    """
-    sections = split_by_sections(text)
-    if not sections:
-        return []
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=config.CHUNK_SIZE,
-        chunk_overlap=config.CHUNK_OVERLAP,
-        separators=["\n\n", "\n", "。", "！", "？", "；", "：", "，", " ", ""],
-        length_function=len,
-    )
-
-    chunks = []
-    context_stack = []  # [(level, title, top_level_num), ...]
-    HEADER_RE = re.compile(r'^(\d+(?:\.\d+)*)\s*(\S.*)')
-
-    for section in sections:
-        first_line = section.split('\n')[0].strip()
-        m = HEADER_RE.match(first_line)
-        if m:
-            number = m.group(1)
-            level = number.count('.') + 1
-            title = m.group(2) if m.group(2) else first_line
-            top_num = number.split('.')[0]
-
-            if context_stack and context_stack[0][2] != top_num:
-                context_stack.clear()
-
-            while context_stack and context_stack[-1][0] >= level:
-                context_stack.pop()
-            context_stack.append((level, title, top_num))
-
-        if context_stack:
-            prefix = " > ".join(t for _, t, _ in context_stack)
-        else:
-            prefix = ""
-
-        content = section if not prefix else f"【{prefix}】\n{section}"
-
-        if len(content) <= config.CHUNK_SIZE:
-            chunks.append(content)
-        else:
-            sub_chunks = splitter.split_text(content)
-            for sub in sub_chunks:
-                if prefix and not sub.strip().startswith("【"):
-                    chunks.append(f"【{prefix}】\n{sub}")
-                else:
-                    chunks.append(sub)
-
-    return chunks
+    return short or "", long or ""
 
 
 def load_and_process_knowledge_files():
     """
-    加载知识文件，对每个文件：
-    - 短文档（<3000字）：跳过摘要，直接切割入库
-    - 长文档：分批生成短+长摘要 → 嵌入相似度去重 → 短摘要用于检索嵌入，长摘要用于展示
-    - 原文 LangChain 切割入库，确保精确检索
+    加载知识文件，每批生成短摘要（text1→embedding）和长摘要（text2→LLM上下文）。
+    短文档原文作为 text1+text2 直接入库。
     """
     documents = []
     knowledge_dir = config.KNOWLEDGE_DIR
@@ -177,66 +90,47 @@ def load_and_process_knowledge_files():
         print(f"\n{'=' * 50}")
         print(f"处理: {filename} ({len(original_text)} 字符)")
 
-        # 短文档：跳过 LLM 摘要生成，原文直接作为摘要内容
         if len(original_text) < SKIP_SHORT_THRESHOLD:
-            print(f"  短文档（<{SKIP_SHORT_THRESHOLD}字），跳过LLM摘要，原文直接写入summary")
-            merged_summary = f"## {filename}\n\n{original_text}"
+            # 短文档：原文作为 text1+text2 直接入库
+            print(f"  短文档（<{SKIP_SHORT_THRESHOLD}字），原文直接入库")
+            documents.append({
+                "text1": original_text,
+                "text2": original_text,
+                "source": filename,
+            })
         else:
             # 长文档：分批生成摘要
             batches = split_text_batches(original_text, SUMMARY_BATCH_SIZE, SUMMARY_BATCH_OVERLAP)
             print(f"  文本分割为 {len(batches)} 批 "
                   f"(每批≤{SUMMARY_BATCH_SIZE}字，重叠{SUMMARY_BATCH_OVERLAP}字)")
 
-            batch_summaries = []
+            all_shorts = []
+            all_longs = []
             for i, batch_text in enumerate(batches):
                 print(f"    处理第 {i+1}/{len(batches)} 批 ({len(batch_text)} 字符)...")
-                merged = summarize_batch(batch_text, filename, i + 1, len(batches))
-                if merged:
-                    batch_summaries.append(merged)
+                short, long = summarize_batch(batch_text, i + 1, len(batches))
+                if short or long:
+                    all_shorts.append(short or "")
+                    all_longs.append(long or "")
 
-            # 直接拼接所有批次摘要（不做去重避免误杀）
-            if len(batch_summaries) == 1:
-                merged_summary = batch_summaries[0]
-            else:
-                parts = [f"## {filename}"]
-                for i, s in enumerate(batch_summaries):
-                    parts.append(f"\n### 第{i + 1}部分\n{s}")
-                merged_summary = "\n\n".join(parts)
-            print(f"  最终摘要: {len(merged_summary)} 字符")
-
-        # 保存摘要
-        if merged_summary:
+            # 保存完整摘要到 summary/ 目录
+            combined = f"## {filename}\n\n"
+            for j, (s, l) in enumerate(zip(all_shorts, all_longs)):
+                combined += f"### {s}\n\n{l}\n\n---\n\n"
             summary_path = os.path.join(summary_dir, filename.replace(".txt", "_summary.md"))
             with open(summary_path, "w", encoding="utf-8") as f:
-                f.write(merged_summary)
+                f.write(combined)
             print(f"  摘要已保存: {summary_path}")
 
-        # 原文块：LangChain 切割，用原文做嵌入（精确检索）
-        original_chunks = chunk_with_langchain(original_text)
-        print(f"  原文切割为 {len(original_chunks)} 个文本块")
-
-        for chunk in original_chunks:
-            documents.append({"text": chunk, "source": filename})
-
-        # LLM摘要：短摘要直接入库，长摘要用 RecursiveCharacterTextSplitter 简单切割
-        if merged_summary:
-            if len(merged_summary) <= config.CHUNK_SIZE:
-                summary_chunks = [merged_summary]
-            else:
-                simple_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=config.CHUNK_SIZE,
-                    chunk_overlap=config.CHUNK_OVERLAP,
-                    separators=["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""],
-                    length_function=len,
-                )
-                summary_chunks = simple_splitter.split_text(merged_summary)
-            if summary_chunks:
-                print(f"  摘要切割为 {len(summary_chunks)} 个文本块")
-                for chunk in summary_chunks:
-                    documents.append({
-                        "text": chunk,
-                        "source": f"{filename}#摘要",
-                    })
+            # 每批摘要独立入库（text1=短摘要→embedding，text2=长摘要→LLM上下文）
+            MAX_TEXT2 = 18000
+            for s, l in zip(all_shorts, all_longs):
+                documents.append({
+                    "text1": s,
+                    "text2": l[:MAX_TEXT2],
+                    "source": filename,
+                })
+            print(f"  入库 {len(all_shorts)} 条摘要记录")
 
     return documents
 
@@ -249,10 +143,11 @@ def ingest(reset=False):
         print("没有可入库的文档块")
         return
 
-    print(f"\n共 {len(documents)} 个文档块，正在生成 Embedding...")
+    print(f"\n共 {len(documents)} 条记录，正在生成 Embedding（基于 text1 短摘要）...")
 
-    texts = [doc["text"] for doc in documents]
-    embeddings = models.encode_texts(texts)
+    # 基于 text1（短摘要）生成 embedding
+    texts_for_emb = [doc["text1"] for doc in documents]
+    embeddings = models.encode_texts(texts_for_emb)
 
     docs_with_embeddings = []
     for i, doc in enumerate(documents):
@@ -266,11 +161,11 @@ def ingest(reset=False):
         milvus_client.create_collection()
 
     count = milvus_client.insert_documents(docs_with_embeddings)
-    print(f"入库完成，新增 {count} 个文档块")
+    print(f"入库完成，新增 {count} 条记录")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="知识入库工具 — 分批摘要 +  LangChain 切割")
+    parser = argparse.ArgumentParser(description="知识入库工具 — 双字段摘要存储")
     parser.add_argument("--reset", action="store_true", help="清空旧数据后重新入库")
     args = parser.parse_args()
     ingest(reset=args.reset)
