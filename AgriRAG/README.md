@@ -1,6 +1,6 @@
 # AgriRAG — 农业领域知识问答系统
 
-基于 **RAG（Retrieval-Augmented Generation）** 的垂直领域智能问答系统。LLM 分批摘要 + 双字段向量存储 + Cross-Encoder 重排序。
+基于 **RAG（Retrieval-Augmented Generation）** 的垂直领域智能问答系统。LLM 分批摘要 + 双字段向量存储 + 分数融合重排序。
 
 ## 技术架构
 
@@ -19,15 +19,18 @@
 │  (API)       │     │  上下文拼接   │     │  向量检索     │
 └──────────────┘     └──────────────┘     └──────┬───────┘
                                                   │
-                                         Cross-Encoder 重排序
+                                        相似度阈值过滤(≥0.30)
+                                                  │
+                                        分数融合 + Cross-Encoder 重排序
+                                          α·余弦 + (1-α)·sigmoid(logits)
 ```
 
 ## 核心特性
 
 - **LLM 分批摘要** — 长文档按 10000 字/批分割，每批生成 20 字短摘要 + markdown 长摘要
 - **双字段向量存储** — text1（短摘要）生成 embedding 用于检索，text2（长摘要）命中后直接返回给 LLM
-- **Cross-Encoder 重排序** — Milvus 初检 60 条 → bge-reranker-v2-m3 精排 → TOP 30
-- **相似度阈值过滤** — 低于阈值的检索结果自动丢弃，减少噪声
+- **分数融合重排序** — Milvus 余弦相似度(α=0.4) + bge-reranker-v2-m3 sigmoid 分数(1-α=0.6) 加权融合，初检 60 条 → 精排 → TOP 30
+- **相似度阈值过滤** — 低于阈值(默认 0.30)的检索结果自动丢弃，减少噪声
 - **Qwen3-Embedding-0.6B** — 本地 Embedding 模型，1024 维稠密向量
 - **内容哈希去重** — MD5 确定性 ID，支持增量入库不重复
 - **SSE 流式输出** — API 模式逐 token 输出
@@ -79,6 +82,9 @@ python query.py 樱桃叶斑病如何防治？
 | 检索数量 | — | 30 | Milvus 返回 top K |
 | 相似度阈值 | — | 0.30 | 低于此值的结果过滤 |
 | 初检候选 | — | 60 | 输入 reranker 的数量 |
+| 分数融合 | — | True | 是否启用 Milvus+Reranker 加权融合 |
+| 融合权重 α | — | 0.4 | Milvus 余弦相似度权重，剩余给 Reranker |
+| Reranker 归一化 | — | True | 对 Reranker logits 做 sigmoid 归一化 |
 
 ## 入库流程
 
@@ -103,7 +109,21 @@ python query.py 樱桃叶斑病如何防治？
                                         │
                                   相似度过滤(≥0.30)
                                         │
-                                  bge-reranker 精排(TOP 30)
+                                  分数融合: α·余弦 + (1-α)·sigmoid(logits)
+                                        │
+                                  bge-reranker 精排 → TOP 30
                                         │
                                   组装上下文(text2) → LLM API 生成答案
 ```
+
+## 打分机制
+
+检索结果通过**两阶段评分 + 加权融合**决定排序：
+
+1. **Milvus 初检** — 余弦相似度（0~1），过滤 < 0.30 的结果
+2. **Reranker 精评** — bge-reranker-v2-m3 Cross-Encoder 对每对 (问题, 文档) 打分，sigmoid 归一化到 [0,1]
+3. **分数融合** — `综合分数 = α × Milvus余弦 + (1-α) × sigmoid(Reranker)`
+
+每条上下文标注三维分数：`(综合: 0.7234, Milvus: 0.6500, Reranker: 0.7723)`
+
+`FUSION_ALPHA`（默认 0.4）控制 Milvus 的权重：调大更偏语义相似，调小更偏深度语义匹配。
