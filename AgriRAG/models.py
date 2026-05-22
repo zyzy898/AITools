@@ -171,7 +171,9 @@ def load_reranker():
 
 
 def rerank(query, documents, top_k=None):
-    """使用 Cross-Encoder 对检索结果重新排序
+    """使用 Cross-Encoder 对检索结果重新排序（支持分数融合）
+
+    融合公式: fused = α * Milvus余弦相似度 + (1-α) * sigmoid(Reranker_logits)
 
     Args:
         query: 用户查询字符串
@@ -179,7 +181,7 @@ def rerank(query, documents, top_k=None):
         top_k: 重排序后保留的数量，默认使用 config.TOP_K
 
     Returns:
-        重排序后的结果列表（score 字段更新为 reranker 分数）
+        重排序后的结果列表，score 字段为融合分数（或 Reranker 分数）
     """
     if not documents:
         return documents
@@ -191,14 +193,35 @@ def rerank(query, documents, top_k=None):
     texts = [doc["text"] for doc in documents]
     pairs = [[query, text] for text in texts]
 
-    scores = model.predict(pairs, batch_size=config.RERANK_BATCH_SIZE, show_progress_bar=False)
+    raw_scores = model.predict(pairs, batch_size=config.RERANK_BATCH_SIZE, show_progress_bar=False)
+    raw_scores = np.asarray(raw_scores, dtype=np.float64)
 
-    ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
-    top_k = min(top_k, len(ranked))
+    if config.FUSION_ENABLED:
+        reranker_scores = 1.0 / (1.0 + np.exp(-raw_scores)) if config.RERANKER_APPLY_SIGMOID else raw_scores
 
-    result = []
-    for doc, score in ranked[:top_k]:
-        doc["score"] = float(score)
-        result.append(doc)
+        results = []
+        for doc, rerank_score in zip(documents, reranker_scores):
+            milvus_score = float(doc.get("score", 0))
+            fused = config.FUSION_ALPHA * milvus_score + (1 - config.FUSION_ALPHA) * float(rerank_score)
+            doc["score"] = round(fused, 4)
+            doc["milvus_score"] = round(milvus_score, 4)
+            doc["reranker_score"] = round(float(rerank_score), 4)
+            results.append(doc)
 
-    return result
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
+    else:
+        if config.RERANKER_APPLY_SIGMOID:
+            scores = 1.0 / (1.0 + np.exp(-raw_scores))
+        else:
+            scores = raw_scores
+
+        ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+        top_k = min(top_k, len(ranked))
+
+        result = []
+        for doc, score in ranked[:top_k]:
+            doc["score"] = round(float(score), 4)
+            result.append(doc)
+
+        return result

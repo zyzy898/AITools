@@ -38,6 +38,11 @@ RERANK_MODEL_NAME = "LLM/bge-reranker-v2-m3"  # reranker 模型名称或本地�
 RERANK_RETRIEVAL_K = 60           # 初检时从 Milvus 检索的候选数量（应 > TOP_K）
 RERANK_BATCH_SIZE = 16            # reranker 推理批次大小
 
+# 分数融合配置（Milvus 余弦相似度 + Reranker Cross-Encoder 分数）
+FUSION_ENABLED = True              # 是否启用分数融合（False 则仅用 Reranker 分数）
+FUSION_ALPHA = 0.4                # Milvus 余弦相似度权重 (0~1)，剩余权重给 Reranker
+RERANKER_APPLY_SIGMOID = True     # 对 Reranker 原始 logits 做 sigmoid 归一化到 [0,1]
+
 # System Prompt（角色设定和要求，用于 chat template 的 system 消息）
 SYSTEM_PROMPT = """你是一位专业的农业技术顾问，擅长樱桃种植、番茄栽培、温室管理等领域。请严格根据下方提供的参考知识来回答用户问题。
 

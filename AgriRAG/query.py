@@ -39,11 +39,16 @@ def retrieve_context(question, top_k=None, show_score=True):
         text = result.get("text2", "") or result.get("text", "")
         source = result.get("source", "")
         score = result.get("score", 0.0)
+        milvus_s = result.get("milvus_score")
+        reranker_s = result.get("reranker_score")
         if not text:
             continue
         header = f"[{i+1}] {source}"
         if show_score:
-            header += f" (相似度: {score:.4f})"
+            if milvus_s is not None and reranker_s is not None:
+                header += f" (综合: {score:.4f}, Milvus: {milvus_s:.4f}, Reranker: {reranker_s:.4f})"
+            else:
+                header += f" (相似度: {score:.4f})"
         context_parts.append(f"{header}\n{text}")
 
     return "\n\n---\n\n".join(context_parts) if context_parts else "未找到相关知识"
