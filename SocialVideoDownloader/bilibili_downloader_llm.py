@@ -62,6 +62,7 @@ REQUIRED_FIELDS = frozenset({
     "bypass_suggestions", "extraction_code", "confidence"
 })
 VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+MAX_JSON_RETRIES = 3
 
 def extract_json_block(content: str) -> Optional[Dict[str, Any]]:
     """Extract and validate the outermost JSON object from LLM response."""
@@ -93,6 +94,34 @@ def extract_json_block(content: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_json_error_reason(content: str) -> str:
+    """获取JSON提取失败的具体原因，用于反馈给LLM修正。"""
+    start = content.find("{")
+    if start == -1:
+        return "响应中未找到JSON对象（缺少左花括号 {）。"
+    depth = 0
+    end = start
+    for i, ch in enumerate(content[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    json_str = content[start:end]
+    try:
+        data = json.loads(json_str)
+        missing = REQUIRED_FIELDS - set(data.keys())
+        if missing:
+            return f"JSON缺少以下必填字段: {', '.join(sorted(missing))}。"
+        if data.get("confidence") not in VALID_CONFIDENCE:
+            return f"confidence字段的值'{data.get('confidence')}'无效，必须是high、medium或low之一。"
+        return "JSON结构无法解析，请检查花括号是否配对、字符串是否正确转义。"
+    except json.JSONDecodeError as e:
+        return f"JSON解析错误: {e}。请检查字符串中的引号、换行符是否正确转义，确保输出是合法JSON。"
+
+
 class LLMAnalyzer:
     """LLM分析器 - 用于分析页面结构并提供反爬解决方案"""
     
@@ -110,9 +139,37 @@ class LLMAnalyzer:
         return (self.api_key and self.api_key != "your-api-key-here" and 
                 self.base_url and self.model)
     
+    def _call_llm(self, messages):
+        """单次LLM API调用，返回响应文本，失败返回None。"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=self.headers,
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                },
+                timeout=60
+            )
+            if response.status_code == 200:
+                result = response.json()
+                return result['choices'][0]['message']['content']
+            else:
+                print(f"[LLM] API请求失败: {response.status_code}: {response.text[:200]}")
+                return None
+        except requests.exceptions.Timeout:
+            print("[LLM] 请求超时")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"[LLM] 网络请求失败: {e}")
+            return None
+
     def analyze_page_structure(self, html_content, page_url, previous_attempts=None):
         """
         分析页面结构，找出视频下载链接和反爬对策
+        当LLM返回的JSON格式不正确时，自动将错误反馈给LLM并重试最多MAX_JSON_RETRIES次。
         """
         if not self.is_configured():
             print("[LLM] LLM未配置，跳过智能分析")
@@ -126,7 +183,8 @@ class LLMAnalyzer:
         if previous_attempts:
             previous_info = f"\n之前尝试过的方法（都失败了）：\n{json.dumps(previous_attempts, ensure_ascii=False, indent=2)}"
         
-        prompt = f"""你是一个网页数据提取专家。我需要从哔哩哔哩(B站)视频页面提取视频下载链接。
+        system_prompt = "你是一个专业的网页数据提取和反爬绕过专家。请提供详细、实用的技术分析。"
+        user_prompt = f"""你是一个网页数据提取专家。我需要从哔哩哔哩(B站)视频页面提取视频下载链接。
 
 页面URL: {page_url}
 
@@ -148,7 +206,7 @@ B站视频链接常见模式：
 - https://xy123x456x78x123xy.mcdn.bilivideo.cn/...
 - 在 script 标签中的 __playinfo__ 或 window.__INITIAL_STATE__
 
-请以JSON格式返回：
+请以JSON格式返回，只返回JSON对象，不包含任何其他文字：
 {{
     "has_video_url": true/false,
     "video_url_patterns": ["可能的URL模式1", "模式2"],
@@ -158,42 +216,35 @@ B站视频链接常见模式：
     "confidence": "high/medium/low"
 }}"""
 
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self.headers,
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": "你是一个专业的网页数据提取和反爬绕过专家。请提供详细、实用的技术分析。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 2000
-                },
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
-                analysis = extract_json_block(content)
-                if analysis:
-                    print(f"[LLM] 分析完成，置信度: {analysis.get('confidence', 'unknown')}")
-                    return analysis
-                print(f"[LLM] 原始响应: {content[:500]}...")
-                return {"raw_response": content}
-            else:
-                print(f"[LLM] API请求失败: {response.status_code}: {response.text[:200]}")
+        for attempt in range(MAX_JSON_RETRIES + 1):
+            content = self._call_llm(messages)
+            if content is None:
                 return None
 
-        except requests.exceptions.Timeout:
-            print("[LLM] 请求超时")
-            return None
-        except requests.exceptions.RequestException as e:
-            print(f"[LLM] 网络请求失败: {e}")
-            return None
+            analysis = extract_json_block(content)
+            if analysis:
+                print(f"[LLM] 分析完成，置信度: {analysis.get('confidence', 'unknown')}")
+                return analysis
+
+            if attempt < MAX_JSON_RETRIES:
+                error_reason = _get_json_error_reason(content)
+                print(f"[LLM] JSON校验失败({error_reason})，正在重试 ({attempt + 1}/{MAX_JSON_RETRIES})...")
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": f"你的上一次回复JSON格式不正确。{error_reason}\n请只返回一个合法的JSON对象，确保包含所有必填字段，不要有任何额外文字。"
+                })
+            else:
+                print(f"[LLM] 达到最大重试次数({MAX_JSON_RETRIES})，JSON校验仍然失败")
+                print(f"[LLM] 原始响应: {content[:500]}...")
+                return {"raw_response": content}
+
+        return None
 
 
 class BilibiliDownloader:
@@ -224,6 +275,34 @@ class BilibiliDownloader:
             return match.group(1)
         return None
     
+    def download_direct(self, video_url, output_path):
+        """使用requests直接下载视频"""
+        print(f"\n开始下载视频...")
+        print(f"视频URL: {video_url[:100]}...")
+        print(f"保存路径: {output_path}")
+        try:
+            response = requests.get(video_url, headers=self.headers, stream=True, timeout=120)
+            response.raise_for_status()
+            total_size = int(response.headers.get('content-length', 0))
+            if total_size > 0:
+                print(f"文件大小: {total_size / 1024 / 1024:.2f} MB")
+            downloaded = 0
+            chunk_size = 8192
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            bar = '=' * int(percent / 2) + '>' + ' ' * (50 - int(percent / 2))
+                            print(f"\r[{bar}] {percent:.1f}%", end='', flush=True)
+            print(f"\n\n[OK] 视频下载成功: {output_path}")
+            return True
+        except Exception as e:
+            print(f"\n[ERROR] 下载失败: {e}")
+            return False
+
     def download_with_ytdlp(self, video_url, output_path):
         """使用 yt-dlp 下载视频"""
         try:
@@ -259,9 +338,9 @@ class BilibiliDownloader:
             return False
     
     def analyze_with_llm_after_failure(self, video_url):
-        """当 yt-dlp 失败后，使用 LLM 分析页面"""
+        """当 yt-dlp 失败后，使用 LLM 分析页面并从 HTML 中提取视频 URL"""
         if not self.llm or not self.llm.is_configured():
-            return None
+            return [], None
         
         print("\n[LLM] yt-dlp 失败，启动页面分析...")
         
@@ -286,9 +365,9 @@ class BilibiliDownloader:
                 html_content = page.content()
                 browser.close()
                 
-                # 调用 LLM 分析
                 analysis = self.llm.analyze_page_structure(html_content, video_url, self.attempts_history)
                 
+                video_urls = []
                 if analysis:
                     print("\n[LLM] 分析结果:")
                     print(f"  找到视频URL: {analysis.get('has_video_url', False)}")
@@ -297,17 +376,31 @@ class BilibiliDownloader:
                     if anti_crawl:
                         print(f"  检测到的反爬技术: {', '.join(anti_crawl)}")
                     
+                    if analysis.get('has_video_url'):
+                        patterns = analysis.get('video_url_patterns', [])
+                        for pattern in patterns:
+                            try:
+                                matches = re.findall(pattern, html_content)
+                                for match in matches:
+                                    if isinstance(match, tuple):
+                                        match = match[0]
+                                    if match and match not in video_urls:
+                                        video_urls.append(match)
+                                        print(f"[LLM] 找到视频URL: {match[:80]}...")
+                            except Exception as e:
+                                print(f"[LLM] 模式匹配失败: {e}")
+                    
                     bypass = analysis.get('bypass_suggestions', [])
                     if bypass:
                         print(f"  绕过建议:")
                         for i, suggestion in enumerate(bypass[:3], 1):
                             print(f"    {i}. {suggestion}")
                 
-                return analysis
+                return video_urls, analysis
                 
         except Exception as e:
             print(f"[LLM] 页面分析失败: {e}")
-            return None
+            return [], None
     
     def download(self, video_url, output_path=None):
         """主下载流程"""
@@ -350,12 +443,19 @@ class BilibiliDownloader:
         print("[1/2] 尝试使用 yt-dlp 下载...")
         success = self.download_with_ytdlp(video_url, output_path)
         
-        # 如果 yt-dlp 失败且启用了LLM，进行分析
+        # 如果 yt-dlp 失败且启用了LLM，使用LLM提取视频URL并下载
         if not success and self.use_llm:
-            print("\n[2/2] yt-dlp 下载失败，尝试LLM分析...")
-            analysis = self.analyze_with_llm_after_failure(video_url)
+            print("\n[2/2] yt-dlp 下载失败，启动LLM分析提取...")
+            video_urls, analysis = self.analyze_with_llm_after_failure(video_url)
             
-            if analysis:
+            if video_urls:
+                print(f"\n共找到 {len(video_urls)} 个视频源")
+                for i, url in enumerate(video_urls):
+                    print(f"\n尝试第 {i+1}/{len(video_urls)} 个视频源...")
+                    if self.download_direct(url, output_path):
+                        return True
+            
+            if analysis and not video_urls:
                 print("\n[提示] 根据LLM分析，您可以尝试:")
                 bypass_suggestions = analysis.get('bypass_suggestions', [])
                 for suggestion in bypass_suggestions:

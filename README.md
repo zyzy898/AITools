@@ -207,23 +207,23 @@ SQL:  SELECT * FROM student_scores WHERE subject='物理' ORDER BY score DESC LI
 
 ### SocialVideoDownloader — 社交视频下载器
 
-支持抖音、小红书、哔哩哔哩的 AI 智能视频下载工具。常规方法失败时自动调用 LLM 分析页面结构。
+支持抖音、小红书、哔哩哔哩的 AI 智能视频下载工具。**yt-dlp 优先，失败后 Playwright + LLM 兜底二次提取下载**。
 
 #### 支持平台
 
-| 平台 | 脚本 | 短链支持 |
-|------|------|----------|
-| 🎵 抖音 | `douyin_downloader_llm.py` | v.douyin.com |
-| 🌟 小红书 | `xiaohongshu_downloader_llm.py` | xhslink.com |
-| 🎬 哔哩哔哩 | `bilibili_downloader_llm.py` | b23.tv |
+| 平台 | 脚本 | 短链支持 | 主下载 | 回退 |
+|------|------|----------|--------|------|
+| 抖音 | `douyin_downloader_llm.py` | v.douyin.com | yt-dlp | Playwright 拦截 + HTML 解析 + LLM 正则提取 |
+| 小红书 | `xiaohongshu_downloader_llm.py` | xhslink.com | yt-dlp | Playwright 获取页面 + LLM 正则提取 |
+| 哔哩哔哩 | `bilibili_downloader_llm.py` | b23.tv | yt-dlp | Playwright 获取页面 + LLM 正则提取 |
 
 #### 核心特性
 
-- 支持短链接解析与分享文本自动提取
-- 主流方式：yt-dlp / Playwright 下载
-- 备用方案：LLM 分析页面 HTML 结构，提取视频 URL
-- 提供反爬绕过建议
-- 可通过 `--no-llm` 禁用 LLM 备用方案
+- **yt-dlp 优先** — 三个平台统一先调 yt-dlp，成功即止，Playwright 不加载
+- **LLM 二次下载** — yt-dlp 失败后 Playwright 获取页面源码，LLM 返回 URL 提取模式，正则匹配后 `requests` 直链下载
+- **JSON 校验自动重试** — LLM 返回的 JSON 格式错误时，将具体错误原因反馈给 LLM 修正，最多重试 3 次
+- **短链接自动解析** — 支持分享文本提取、短链跳转
+- **可选禁用** — `--no-llm` 关闭 LLM 备用方案
 
 #### 快速使用
 
@@ -301,9 +301,14 @@ A: 将 `.txt` 格式的知识文档放入 `AgriRAG/database_dir/农业/txt/` 目
 A: 编辑 `AgriRAG/config.py` 或设置环境变量 `LLM_API_URL`、`LLM_API_KEY`、`LLM_API_MODEL`。
 
 **Q: SocialVideoDownloader 下载失败怎么办？**  
-A: 确保 yt-dlp 和 Playwright 已正确安装。如果仍然失败，配置 LLM API 后系统会自动分析页面结构并给出建议。
+A: 系统会依次尝试 yt-dlp → Playwright 提取 → LLM 智能分析。确保 yt-dlp 和 Playwright 正确安装。若仍失败，配置 LLM API 后 LLM 将自动分析页面并尝试二次提取下载。
 
 ## 更新日志
+
+### v0.4.0 (2026-05-25)
+- 🎬 SocialVideoDownloader 三个平台统一为 yt-dlp 优先 + Playwright/LLM 兜底
+- 🔄 SocialVideoDownloader 小红书/B站 LLM 回退升级为二次提取下载（不再仅输出建议）
+- ✅ SocialVideoDownloader 新增 LLM JSON 输出校验与自动重试（最多 3 次）
 
 ### v0.3.0 (2026-05-19)
 - 🔄 AgriRAG 重构：LLM 分批摘要 + 双字段向量存储(text1+text2) + Cross-Encoder 重排序
@@ -340,4 +345,4 @@ A: 确保 yt-dlp 和 Playwright 已正确安装。如果仍然失败，配置 LL
 
 ---
 
-**最后更新**: 2026-05-19
+**最后更新**: 2026-05-25
