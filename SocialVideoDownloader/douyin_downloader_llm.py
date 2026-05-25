@@ -34,9 +34,9 @@ from typing import Optional, Dict, Any, List
 
 # ==================== LLM 配置 ====================
 # 请在这里填写你的LLM API配置
-LLM_API_KEY = "ark-c00f4c4a-6dca-4aa2-a07c-43d4f19b0249-53820"  # 替换为你的API密钥
-LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 替换为你的API基础URL
-LLM_MODEL = "ep-20260518222040-g5zsf"  # 替换为你的模型名称
+LLM_API_KEY = ""  # 替换为你的API密钥
+LLM_BASE_URL = ""  # 替换为你的API基础URL
+LLM_MODEL = ""  # 替换为你的模型名称
 # ==================================================
 
 REQUIRED_FIELDS = frozenset({
