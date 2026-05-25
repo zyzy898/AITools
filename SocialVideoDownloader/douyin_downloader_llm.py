@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-抖音视频下载器 - 带LLM智能分析版
-支持从抖音视频页面自动提取并下载视频，当常规方法失败时自动调用LLM分析页面结构
+抖音视频/图文笔记下载器 - 带LLM智能分析版
+支持从抖音视频页面/图文笔记页面自动提取并下载，当常规方法失败时自动调用LLM分析页面结构
+
+支持内容:
+    - 视频下载 (douyin.com/video/...)
+    - 图文笔记下载 (douyin.com/note/...) — 提取所有图片
 
 使用方法:
-    python douyin_downloader_llm.py <抖音视频URL> [输出文件名]
-    
-示例:
-    python douyin_downloader_llm.py https://www.douyin.com/video/7600716080790165155
-    python douyin_downloader_llm.py https://v.douyin.com/Ksb4dKSz9y0/ my_video.mp4
+    python douyin_downloader_llm.py <抖音URL> [输出文件名]
+
 
 LLM配置:
     在代码中设置以下变量：
@@ -23,6 +24,7 @@ import re
 import os
 import sys
 import json
+import base64
 import argparse
 from urllib.parse import unquote, urlparse
 from playwright.async_api import async_playwright
@@ -32,9 +34,9 @@ from typing import Optional, Dict, Any, List
 
 # ==================== LLM 配置 ====================
 # 请在这里填写你的LLM API配置
-LLM_API_KEY = ""  # 替换为你的API密钥
-LLM_BASE_URL = ""  # 替换为你的API基础URL
-LLM_MODEL = ""  # 替换为你的模型名称
+LLM_API_KEY = "ark-c00f4c4a-6dca-4aa2-a07c-43d4f19b0249-53820"  # 替换为你的API密钥
+LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 替换为你的API基础URL
+LLM_MODEL = "ep-20260518222040-g5zsf"  # 替换为你的模型名称
 # ==================================================
 
 REQUIRED_FIELDS = frozenset({
@@ -264,14 +266,87 @@ class LLMAnalyzer:
         
         return strategies
 
+    def analyze_note_structure(self, html_content, page_url, previous_attempts=None):
+        """
+        分析图文笔记页面结构，找出图片下载链接和反爬对策
+        """
+        if not self.is_configured():
+            print("[LLM] LLM未配置，跳过智能分析")
+            return None
+
+        print("[LLM] 正在调用LLM分析笔记页面结构...")
+
+        html_sample = html_content[:8000] if len(html_content) > 8000 else html_content
+
+        previous_info = ""
+        if previous_attempts:
+            previous_info = f"\n之前尝试过的方法（都失败了）：\n{json.dumps(previous_attempts, ensure_ascii=False, indent=2)}"
+
+        system_prompt = "你是一个专业的网页数据提取和反爬绕过专家。请提供详细、实用的技术分析。"
+        user_prompt = f"""你是一个网页数据提取专家。我需要从抖音图文笔记页面提取图片下载链接。
+
+页面URL: {page_url}
+
+页面HTML片段（前8000字符）：
+```html
+{html_sample}
+```
+{previous_info}
+
+请分析：
+1. 页面中是否包含图片下载链接？在哪里？（注意查找 douyinpic.com 图片CDN链接）
+2. 图片URL通常有哪些特征？（格式、参数、CDN域名等）
+3. 页面使用了什么数据嵌入方式？（如 RENDER_DATA、SSR直出、API异步加载等）
+4. 图片URL可能隐藏在哪些HTML结构或JS变量中？
+5. 提供具体的Python正则表达式代码建议来提取图片URL
+
+请以JSON格式返回，只返回JSON对象，不包含任何其他文字：
+{{
+    "has_images": true/false,
+    "image_url_patterns": ["可能的正则模式1", "模式2"],
+    "data_locations": ["RENDER_DATA", "img_src", "JS变量"],
+    "anti_crawl_techniques": ["反爬技术1", "反爬技术2"],
+    "bypass_suggestions": ["绕过建议1", "绕过建议2"],
+    "extraction_code": "具体的Python代码建议",
+    "confidence": "high/medium/low"
+}}"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        for attempt in range(MAX_JSON_RETRIES + 1):
+            content = self._call_llm(messages)
+            if content is None:
+                return None
+
+            analysis = extract_json_block(content)
+            if analysis:
+                print(f"[LLM] 笔记分析完成，置信度: {analysis.get('confidence', 'unknown')}")
+                return analysis
+
+            if attempt < MAX_JSON_RETRIES:
+                error_reason = _get_json_error_reason(content)
+                print(f"[LLM] JSON校验失败({error_reason})，正在重试 ({attempt + 1}/{MAX_JSON_RETRIES})...")
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": f"你的上一次回复JSON格式不正确。{error_reason}\n请只返回一个合法的JSON对象，确保包含所有必填字段，不要有任何额外文字。"
+                })
+            else:
+                print(f"[LLM] 达到最大重试次数({MAX_JSON_RETRIES})，JSON校验仍然失败")
+                print(f"[LLM] 原始响应: {content[:500]}...")
+                return {"raw_response": content}
+
+        return None
+
 
 def extract_url_from_text(text):
     """从分享文本中提取抖音链接"""
-    # 匹配 v.douyin.com 短链接
-    match = re.search(r'https?://v\.douyin\.com/[a-zA-Z0-9]+/?', text)
+    match = re.search(r'https?://v\.douyin\.com/[\w-]+/?', text)
     if match:
         return match.group(0)
-    # 匹配 www.douyin.com 链接
     match = re.search(r'https?://www\.douyin\.com/[^\s]+', text)
     if match:
         return match.group(0)
@@ -331,9 +406,20 @@ class DouyinDownloader:
         try:
             response = requests.head(short_url, headers=self.headers, allow_redirects=True, timeout=10)
             return response.url
-        except Exception as e:
-            print(f"解析短链接失败: {e}")
-            return short_url
+        except Exception:
+            pass
+
+        try:
+            import yt_dlp
+            with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+                info = ydl.extract_info(short_url, download=False, process=False)
+                real_url = info.get('url') or info.get('webpage_url') or short_url
+                if real_url and real_url != short_url:
+                    return real_url
+        except Exception:
+            pass
+
+        return short_url
     
     async def extract_video_urls_with_llm(self, video_url, html_content):
         """使用LLM分析提取视频URL"""
@@ -576,6 +662,182 @@ class DouyinDownloader:
         
         return cdn_urls + api_urls
     
+    def _sanitize_filename(self, name):
+        """清理文件名中的非法字符"""
+        return re.sub(r'[\\/:*?"<>|]', '_', name)
+
+    async def extract_note_images_with_llm(self, note_url, html_content):
+        """使用LLM分析提取笔记图片URL"""
+        if not self.llm or not self.llm.is_configured():
+            return [], f"note_unknown"
+
+        print("\n[LLM] 常规方法未提取到图片，启动LLM智能分析...")
+
+        analysis = self.llm.analyze_note_structure(
+            html_content,
+            note_url,
+            self.attempts_history
+        )
+
+        if not analysis:
+            return [], f"note_unknown"
+
+        images = []
+
+        if analysis.get('has_images'):
+            patterns = analysis.get('image_url_patterns', [])
+            for pattern in patterns:
+                try:
+                    matches = re.findall(pattern, html_content)
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            match = match[0]
+                        url = match.replace('&amp;', '&') if isinstance(match, str) else match
+                        if url and url not in images:
+                            images.append(url)
+                            print(f"[LLM] 找到图片URL: {url[:80]}...")
+                except Exception as e:
+                    print(f"[LLM] 模式匹配失败: {e}")
+
+        bypass_suggestions = analysis.get('bypass_suggestions', [])
+        if bypass_suggestions:
+            print("\n[LLM] 反爬绕过建议:")
+            for i, suggestion in enumerate(bypass_suggestions, 1):
+                print(f"  {i}. {suggestion}")
+
+        return images, f"note_unknown"
+
+    async def extract_note_images(self, note_url):
+        """从抖音图文笔记中提取图片URL列表"""
+        note_id_match = re.search(r'note/(\d+)', note_url)
+        note_id = note_id_match.group(1) if note_id_match else "unknown"
+
+        print(f"\n检测到图文笔记 (ID: {note_id})")
+        print(f"正在访问页面: {note_url}")
+
+        images = []
+        title = f"note_{note_id}"
+        html_content = ""
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
+            )
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='zh-CN',
+                timezone_id='Asia/Shanghai',
+            )
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                window.chrome = { runtime: {} };
+            """)
+
+            page = await context.new_page()
+
+            try:
+                await page.goto(note_url, wait_until='domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(3000)
+            except Exception as e:
+                print(f"页面加载异常: {e}")
+
+            html_content = await page.content()
+            await browser.close()
+
+        # 只提取笔记内容图片: biz_tag=aweme_images 且非水印版本
+        img_pattern = r'https?://[^"\s]*douyinpic\.com[^"\s]+'
+        raw_urls = re.findall(img_pattern, html_content)
+
+        seen_hashes = set()
+        for url in raw_urls:
+            url = url.replace('&amp;', '&')
+            if 'biz_tag=aweme_images' not in url:
+                continue
+            if 'water-v2' in url:
+                continue
+
+            match = re.search(r'/([a-zA-Z0-9_]+)~', url)
+            if not match:
+                continue
+            img_hash = match.group(1)
+            if img_hash in seen_hashes:
+                continue
+            seen_hashes.add(img_hash)
+            images.append(url)
+
+        if images:
+            print(f"[笔记] 提取到 {len(images)} 张内容图片")
+        else:
+            print("[笔记] 未找到内容图片，尝试通用提取...")
+            seen_all = set()
+            for url in raw_urls:
+                url = url.replace('&amp;', '&')
+                if 'water-v2' in url:
+                    continue
+                match = re.search(r'/([a-zA-Z0-9_]+)~', url)
+                if match:
+                    img_hash = match.group(1)
+                    if img_hash in seen_all:
+                        continue
+                    seen_all.add(img_hash)
+                    images.append(url)
+
+            if images:
+                print(f"[笔记] 通用提取到 {len(images)} 张图片")
+            else:
+                # 常规方法全部失败，启动LLM智能分析
+                print("[笔记] 常规提取失败，启动LLM智能分析...")
+                self.attempts_history.append({
+                    'method': 'note_regex_extraction',
+                    'found': False,
+                    'detail': 'biz_tag和通用提取均未找到图片'
+                })
+                llm_images, _ = await self.extract_note_images_with_llm(note_url, html_content)
+                if llm_images:
+                    images = llm_images
+                    print(f"[LLM] 智能分析提取到 {len(images)} 张图片")
+
+        # 尝试获取标题
+        title_match = re.search(r'<title[^>]*>([^<]+)</title>', html_content)
+        if title_match:
+            title_text = title_match.group(1).strip()
+            if title_text and 'douyin.com' not in title_text.lower() and title_text != '抖音':
+                title = title_text
+
+        if title == f"note_{note_id}":
+            meta_match = re.search(r'<meta[^>]*name="description"[^>]*content="([^"]+)"', html_content)
+            if meta_match:
+                desc = meta_match.group(1)
+                if desc and len(desc) > 5:
+                    title = desc[:50]
+
+        return images, title
+
+    def _search_note_in_json(self, obj, depth=0):
+        if depth > 15:
+            return None
+        if isinstance(obj, dict):
+            if obj.get('aweme_type') in (2, 68, 150) and ('images' in obj or 'image_post_info' in obj):
+                return obj
+            for v in obj.values():
+                result = self._search_note_in_json(v, depth + 1)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = self._search_note_in_json(item, depth + 1)
+                if result:
+                    return result
+        return None
+
     def download_video(self, video_url, output_path):
         """下载视频到本地"""
         print(f"\n开始下载视频...")
@@ -609,9 +871,126 @@ class DouyinDownloader:
         except Exception as e:
             print(f"\n[ERROR] 下载失败: {e}")
             return False
+
+    def download_image(self, image_url, output_path):
+        """下载单张图片到本地"""
+        try:
+            img_headers = dict(self.headers)
+            img_headers['Referer'] = 'https://www.douyin.com/'
+            response = requests.get(image_url, headers=img_headers, stream=True, timeout=60)
+            response.raise_for_status()
+
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+
+            file_size = os.path.getsize(output_path) / 1024
+            print(f"  [OK] {output_path} ({file_size:.1f} KB)")
+            return True
+        except Exception as e:
+            print(f"  [ERROR] 下载失败: {e}")
+            return False
     
+    def _is_note_url(self, url):
+        """检查URL是否为抖音图文笔记"""
+        return '/note/' in url
+
+    async def download_note(self, note_url):
+        """下载图文笔记中的所有图片（使用Playwright会话确保cookies/Referer正确）"""
+        images, title = await self.extract_note_images(note_url)
+
+        if not images:
+            print("[ERROR] 未能从笔记中提取到图片")
+            return False
+
+        safe_title = self._sanitize_filename(title) if title else "note"
+        note_id_match = re.search(r'note/(\d+)', note_url)
+        note_id = note_id_match.group(1) if note_id_match else "unknown"
+        folder = f"douyin_note_{note_id}_{safe_title[:30]}"
+
+        counter = 1
+        original_folder = folder
+        while os.path.exists(folder):
+            folder = f"{original_folder}_{counter}"
+            counter += 1
+
+        os.makedirs(folder, exist_ok=True)
+
+        print(f"\n[笔记] 标题: {title}")
+        print(f"[笔记] 共 {len(images)} 张图片")
+        print(f"[笔记] 保存到: {folder}/")
+        print("-" * 60)
+
+        success_count = 0
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
+            )
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='zh-CN',
+            )
+            page = await context.new_page()
+
+            try:
+                await page.goto(note_url, wait_until='domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(2000)
+            except Exception as e:
+                print(f"[WARN] 下载会话页面加载异常: {e}")
+
+            for i, img_url in enumerate(images):
+                ext = '.webp'
+                if '.png' in img_url.lower():
+                    ext = '.png'
+                elif '.jpeg' in img_url.lower() or '.jpg' in img_url.lower():
+                    ext = '.jpeg'
+                filename = f"{i+1:02d}{ext}"
+                filepath = os.path.join(folder, filename)
+                print(f"[{i+1}/{len(images)}] 下载图片...")
+                try:
+                    body_b64 = await page.evaluate("""
+                        async (url) => {
+                            const resp = await fetch(url, {referrer: document.location.href});
+                            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                            const buf = await resp.arrayBuffer();
+                            const bytes = new Uint8Array(buf);
+                            let binary = '';
+                            for (let i = 0; i < bytes.byteLength; i++)
+                                binary += String.fromCharCode(bytes[i]);
+                            return btoa(binary);
+                        }
+                    """, img_url)
+
+                    with open(filepath, 'wb') as f:
+                        f.write(base64.b64decode(body_b64))
+                    file_size = os.path.getsize(filepath) / 1024
+                    print(f"  [OK] {filename} ({file_size:.1f} KB)")
+                    success_count += 1
+                except Exception as e:
+                    print(f"  [ERROR] 下载失败: {e}")
+
+            await browser.close()
+
+        print("-" * 60)
+        if success_count == len(images):
+            print(f"[OK] 全部 {success_count} 张图片下载完成!")
+            return True
+        elif success_count > 0:
+            print(f"[WARN] 部分成功: {success_count}/{len(images)} 张图片下载完成")
+            return True
+        else:
+            print(f"[FAIL] 所有图片下载失败")
+            return False
+
     async def download(self, video_url, output_path=None):
-        """主下载流程：yt-dlp优先，失败后Playwright+LLM兜底"""
+        """主下载流程：自动识别视频/笔记，yt-dlp优先，失败后Playwright+LLM兜底"""
         # 从输入文本中提取URL
         extracted_url = extract_url_from_text(video_url)
         if extracted_url:
@@ -619,11 +998,16 @@ class DouyinDownloader:
             print(f"提取到链接: {video_url}")
         
         # 处理短链接
-        if 'v.douyin.com' in video_url:
+        is_short_url = 'v.douyin.com' in video_url
+        if is_short_url:
             print("检测到短链接，正在解析...")
             video_url = self.resolve_short_url(video_url)
             print(f"真实URL: {video_url}")
         
+        # 检测是否为图文笔记
+        if self._is_note_url(video_url):
+            return await self.download_note(video_url)
+
         # 提取视频ID
         video_id_match = re.search(r'video/(\d+)', video_url)
         video_id = video_id_match.group(1) if video_id_match else "unknown"
@@ -659,6 +1043,9 @@ class DouyinDownloader:
         
         if not video_urls:
             print("[ERROR] 未能找到视频下载链接")
+            if is_short_url:
+                print("[FALLBACK] 短链接可能为图文笔记，尝试提取图片...")
+                return await self.download_note(video_url)
             if self.llm and not self.llm.is_configured():
                 print("\n提示: 配置LLM API可以获得智能分析功能")
                 print("请编辑代码中的 LLM_API_KEY, LLM_BASE_URL, LLM_MODEL 变量")
