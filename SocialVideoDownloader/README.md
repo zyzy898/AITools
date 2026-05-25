@@ -19,21 +19,6 @@ playwright install chromium
 
 各脚本按需导入依赖（如 yt-dlp 和 Playwright 均为延迟导入，未被使用时不会加载）。
 
-## 快速开始
-
-```bash
-# 抖音
-python douyin_downloader_llm.py https://v.douyin.com/Ksb4dKSz9y0/
-python douyin_downloader_llm.py https://www.douyin.com/video/7600716080790165165 my_video.mp4
-
-# 小红书
-python xiaohongshu_downloader_llm.py "https://www.xiaohongshu.com/explore/699473ba000000001d02758e"
-python xiaohongshu_downloader_llm.py "分享文本 http://xhslink.com/o/2BOIVJaEtms 复制后打开小红书查看"
-
-# 哔哩哔哩
-python bilibili_downloader_llm.py "https://www.bilibili.com/video/BV11XwuzRET8"
-python bilibili_downloader_llm.py "【标题】 https://b23.tv/FwARg66"
-```
 
 > 支持从分享文本自动提取链接。未指定输出文件名时，自动根据视频 ID / 笔记 ID / BV 号生成。
 
