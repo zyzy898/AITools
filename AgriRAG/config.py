@@ -32,6 +32,14 @@ KNOWLEDGE_DIR = os.path.join(BASE_DIR, "database_dir", "农业", "txt")
 TOP_K = 30
 SIMILARITY_THRESHOLD = 0.30  # 低于此分数的检索结果不纳入上下文
 
+# 多路召回配置（稠密向量 + 稀疏关键词 → RRF融合）
+MULTI_RECALL_ENABLED = True       # 是否启用多路召回（False 则仅用稠密向量召回）
+BM25_RECALL_K = 30                # BM25 稀疏关键词召回数量
+DENSE_RECALL_K = 60               # 稠密向量召回数量（多路模式下替代 RERANK_RETRIEVAL_K 作为首路召回量）
+RRF_K = 60                        # RRF 融合平滑参数，越大排名靠后的文档影响越小
+DENSE_WEIGHT = 1.0                # 稠密路径在 RRF 融合中的权重
+SPARSE_WEIGHT = 1.0               # 稀疏路径在 RRF 融合中的权重
+
 # Reranker 配置
 RERANK_ENABLED = True             # 是否启用 Cross-Encoder 重排序
 RERANK_MODEL_NAME = "LLM/bge-reranker-v2-m3"  # reranker 模型名称或本地路径

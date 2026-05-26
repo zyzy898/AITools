@@ -156,6 +156,61 @@ def _handle_stream_response(resp):
     return full_content
 
 
+def rrf_fusion(dense_results, sparse_results, k=60, dense_weight=1.0, sparse_weight=1.0):
+    """RRF (Reciprocal Rank Fusion) 多路召回融合
+
+    公式: score(doc) = Σ weight_r / (k + rank_i(doc, r))
+
+    Args:
+        dense_results: 稠密向量召回结果列表
+        sparse_results: 稀疏关键词召回结果列表
+        k: RRF 平滑参数
+        dense_weight: 稠密路径权重
+        sparse_weight: 稀疏路径权重
+
+    Returns:
+        按 RRF 分数降序的合并结果列表
+    """
+    scores = {}
+    doc_map = {}
+
+    for rank, doc in enumerate(dense_results):
+        doc_id = doc.get("id") or f"{doc.get('source', '')}|{doc.get('text1', '')}"
+        scores[doc_id] = scores.get(doc_id, 0) + dense_weight / (k + rank + 1)
+        if doc_id not in doc_map:
+            doc_map[doc_id] = dict(doc)
+            doc_map[doc_id]["_dense_rank"] = rank + 1
+            doc_map[doc_id]["_sparse_rank"] = None
+
+    for rank, doc in enumerate(sparse_results):
+        doc_id = doc.get("id") or f"{doc.get('source', '')}|{doc.get('text1', '')}"
+        scores[doc_id] = scores.get(doc_id, 0) + sparse_weight / (k + rank + 1)
+        if doc_id not in doc_map:
+            doc_map[doc_id] = dict(doc)
+            doc_map[doc_id]["_sparse_rank"] = rank + 1
+            doc_map[doc_id]["_dense_rank"] = None
+        else:
+            doc_map[doc_id]["_sparse_rank"] = rank + 1
+
+    merged = [
+        {
+            **doc_map[doc_id],
+            "score": round(float(scores[doc_id]), 6),
+            "rrf_score": round(float(scores[doc_id]), 6),
+        }
+        for doc_id in scores
+    ]
+    merged.sort(key=lambda x: x["score"], reverse=True)
+
+    if dense_results or sparse_results:
+        dense_hits = sum(1 for d in merged if d["_dense_rank"] is not None)
+        sparse_hits = sum(1 for d in merged if d["_sparse_rank"] is not None)
+        both_hits = sum(1 for d in merged if d["_dense_rank"] is not None and d["_sparse_rank"] is not None)
+        print(f"  RRF融合: 稠密{dense_hits}条 + 稀疏{sparse_hits}条 → 去重{len(merged)}条 (两路重叠{both_hits}条)")
+
+    return merged
+
+
 def load_reranker():
     """加载 Cross-Encoder reranker 模型"""
     global reranker_model

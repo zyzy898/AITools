@@ -110,7 +110,7 @@ def search_vectors(query_vector, top_k=None):
     results = client.search(
         config.COLLECTION_NAME,
         [query_vector],
-        output_fields=["text1", "text2", "source"],
+        output_fields=["id", "text1", "text2", "source"],
         limit=top_k
     )
 
@@ -125,6 +125,7 @@ def search_vectors(query_vector, top_k=None):
         # text1 太短时用 text2 作为展示内容
         display_text = text2 if len(text1) < 50 else text1
         formatted.append({
+            "id": entity.get("id", ""),
             "text1": text1,
             "text2": text2,
             "text": display_text,
