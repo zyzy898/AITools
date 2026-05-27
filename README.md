@@ -251,29 +251,6 @@ A: 将 `FinGuard Agent/公司财报审查.yml` 导入 Dify 平台，配置模型
 **Q: SocialVideoDownloader 下载失败怎么办？**  
 A: 系统会依次尝试 yt-dlp → Playwright 提取 → LLM 智能分析。确保 yt-dlp 和 Playwright 正确安装。若仍失败，配置 LLM API 后 LLM 将自动分析页面并尝试二次提取下载。
 
-## 更新日志
-
-### v0.5.0 (当前)
-- 🤖 新增 FinGuard Agent 模块 — 基于 Dify 工作流的智能财报审查智能体
-- 🔥 移除 AgriRAG 模块
-- 📝 更新项目文档
-
-### v0.4.0 (2026-05-25)
-- 🎬 SocialVideoDownloader 三个平台统一为 yt-dlp 优先 + Playwright/LLM 兜底
-- 🔄 SocialVideoDownloader 小红书/B站 LLM 回退升级为二次提取下载（不再仅输出建议）
-- ✅ SocialVideoDownloader 新增 LLM JSON 输出校验与自动重试（最多 3 次）
-
-### v0.3.0 (2026-05-19)
-- 🔄 AgriRAG 重构：LLM 分批摘要 + 双字段向量存储(text1+text2) + Cross-Encoder 重排序
-- 🚀 AgriRAG 移除本地 LLM 模式，统一 API 调用
-
-### v0.2.0 (2026-05-14)
-- ✨ 新增 AgriRAG 模块（RAG + Milvus + BGE Embedding）
-
-### v0.1.0 (2026-05-11)
-- 🎉 项目初始化
-- ✨ 添加 NL2SQL 模块（Ollama + Gradio + MySQL）
-- ✨ 添加 SocialVideoDownloader 模块（支持抖音、小红书、B站）
 
 ## 贡献指南
 
