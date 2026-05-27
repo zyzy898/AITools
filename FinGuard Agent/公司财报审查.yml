@@ -1,0 +1,344 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: 公司财报审查
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/volcengine_maas:0.0.49@f55d09ab593df628ba5171bc556efc256dff7bcf73f15ba9d2dcb381ee6c5564
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: document-extractor
+      id: 1779803036913-source-1779845204441-target
+      selected: false
+      source: '1779803036913'
+      sourceHandle: source
+      target: '1779845204441'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: document-extractor
+        targetType: llm
+      id: 1779845204441-source-1779851614373-target
+      selected: false
+      source: '1779845204441'
+      sourceHandle: source
+      target: '1779851614373'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: llm
+      id: 1779851614373-source-1779849714913-target
+      selected: false
+      source: '1779851614373'
+      sourceHandle: source
+      target: '1779849714913'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1779849714913-source-1779850023019-target
+      source: '1779849714913'
+      sourceHandle: source
+      target: '1779850023019'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables:
+        - allowed_file_extensions: []
+          allowed_file_types:
+          - document
+          allowed_file_upload_methods:
+          - local_file
+          default: ''
+          hint: ''
+          label: 公司财报
+          options: []
+          placeholder: ''
+          required: true
+          type: file
+          variable: financial_pdf
+      height: 108
+      id: '1779803036913'
+      position:
+        x: -237.65350845548375
+        y: 70.69586748003053
+      positionAbsolute:
+        x: -237.65350845548375
+        y: 70.69586748003053
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_array_file: false
+        selected: false
+        title: 文档提取器
+        type: document-extractor
+        variable_selector:
+        - '1779803036913'
+        - financial_pdf
+      height: 103
+      id: '1779845204441'
+      position:
+        x: -11.312880033032968
+        y: 354.9532588208016
+      positionAbsolute:
+        x: -11.312880033032968
+        y: 354.9532588208016
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 深度审查推理节点
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: ep-20260518222040-g5zsf
+          provider: langgenius/volcengine_maas/volcengine_maas
+        prompt_template:
+        - id: bc4293e2-4e95-4ac8-8113-55d244ba0094
+          role: system
+          text: '# Role
+
+            你是一家大型产业集团的首席财务官（CFO），拥有 20 年以上财务分析、信贷审批与反舞弊经验。你的核心能力是从零散指标和预警中，迅速判断企业真实的盈利质量、现金流安全与报表粉饰风险。
+
+
+            # Input Data
+
+            - **季度财报**：
+
+            {{#1779851614373.text#}}
+
+
+
+
+            # Task
+
+            仅依据上述输入，撰写一份精炼、客观、直击要害的《企业财务健康度诊断与风控报告》。报告必须严格遵循“指标→推论→风险→建议”的链条，不得引入任何输入中未提及的外部信息或假设性背景。
+
+
+            # Diagnostic Rules (不可违背)
+
+            1. **纯数字驱动**：所有结论必须能够回溯到指标数值、同比/环比趋势或预警信号。禁止以“可能受宏观影响”“考虑到行业特性”等模糊说辞替代具体数据依据。
+
+            2. **预警第一原则**：只要触发了硬性风险预警，必须将其作为诊断核心，详细解释该预警在真实商业场景中对应的潜在危机（如供应商挤兑、授信断崖、虚假收入循环等）。
+
+            3. **交叉验证原则**：盈利指标必须结合现金流、负债结构交叉检验。例如，高净利润增长伴随经营性现金流恶化，必须指出“纸面富贵”与应收账款积压风险。
+
+            4. **不看后视镜**：所有分析应前瞻地评估未来 12 个月内可能爆发的流动性或合规风险，而非仅描述历史事实。
+
+
+            # Output Format
+
+            请严格按照以下 Markdown 结构输出，不得增减标题层级：
+
+
+            ### 🚨 数据风控综合判定
+
+            [用一句话定性：极度稳健 / 正常运转 / 存在特定滑坡隐患 / 财务高危，并给出核心理由。该判定必须直接呼应最严重的预警信号和指标矛盾点。]
+
+
+            ### 📊 指标层深度诊断
+
+            - **成长性与盈利质量评估**：[结合营收增长率、主营利润占比、非经常性损益占比，判断企业是靠核心业务造血，还是依赖一次性收益或会计手段美化业绩。若非经常性损益占比超过
+            20% 或主业利润连续下滑，需明确警示]
+
+            - **现金流造血能力分析**：[重点分析净利润现金含量、经营活动现金流净额趋势。若现金含量持续低于 80%，必须指出盈利的“纸面富贵”属性、下游占款或提前确认收入的可能]
+
+            - **流动性与偿债防线安全度**：[分析资产负债率、短债占比、现金及等价物对短期债务的覆盖倍数。若货币资金充裕但短期借款激增，需质疑存贷双高背后的资金占用或受限风险]
+
+
+            ### 🔍 核心风险因子拦截说明
+
+            - **风险因子 1**：[详细解读触发的第一条预警。描述该预警指向的具体财务异常、可能的表外操作（如兜底承诺、明股实债）及其引发的连锁反应]，若无风险则不输出任何内容
+
+            - **风险因子 2**：[同上，依次解读所有已触发预警。若未触发任何预警，则不输出任何内容，但仍需简要说明最接近预警阈值的指标]
+
+            - **未触发但接近阈值的补充警示**：[如有指标虽未达到预警线但显著恶化（如应收账款增速超营收增速 1.5 倍以上），在此处指出] 若没有风险则不输出任何内容
+
+
+            ### 📝 财务合规性补充调阅建议
+
+            [基于当前数据疑点，明确指出下一步必须定向调阅的具体原始财报或业务附件，至少包含两项，例如：
+
+            1. 调阅「前五大客户销售合同及信用账期明细」以核实是否存在突击大额销售或放宽账期冲收入；
+
+            2. 调阅「货币资金明细及受限情况说明」以排查大额存单质押、共管账户或隐性担保。]
+
+
+            ### 📌 总结评价
+
+            请根据以上内容进行总结'
+        selected: false
+        structured_output_enabled: false
+        title: LLM 2
+        type: llm
+        vision:
+          enabled: false
+      height: 115
+      id: '1779849714913'
+      position:
+        x: 484.2658902831005
+        y: 338.21899281807055
+      positionAbsolute:
+        x: 484.2658902831005
+        y: 338.21899281807055
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        outputs:
+        - value_selector:
+          - '1779849714913'
+          - text
+          value_type: string
+          variable: result
+        selected: false
+        title: 输出
+        type: end
+      height: 87
+      id: '1779850023019'
+      position:
+        x: 733.3033013199636
+        y: 91.69586748003053
+      positionAbsolute:
+        x: 733.3033013199636
+        y: 91.69586748003053
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: ep-20260518222040-g5zsf
+          provider: langgenius/volcengine_maas/volcengine_maas
+        prompt_template:
+        - id: bc4548d0-cf7e-448f-9ccd-2fd6f03fd9fe
+          role: system
+          text: "你是一个专业的数据结构化提取专家。请仔细阅读以下财报文本，并精准提取指定的财务数据。\n\n【财报文本】\n{{#1779845204441.text#}}\n\
+            \n【提取原则】\n1. 纯数字输出：所有数值必须输出为纯数字字符串，不保留千分位逗号、货币符号、单位文字。例如原文“1,234.56万元”需转换为“12345600.00”，“-567.89”保留负号。\n\
+            2. 单位自动转换：若财报中数值单位明确为“万元”，请自动乘以10,000转换为元；若单位为“亿元”，请乘以100,000,000转换为元；若无单位标注或为“元”，直接提取数字。\n\
+            3. 缺失处理：若财报中完全没有某项数据，或无法确认对应数值，该项值设为 “0”。\n4. 符号识别：若数值以括号“(123.45)”表示负数，请提取为“-123.45”；若明确标注“-”，保留负号。\n\
+            5. 报表口径：仅提取合并财务报表口径数据（如存在合并与母公司之分），且必须为对应会计期间的期末或本期值。“上期”指财报中列示的前一可比会计期间（通常为上一年同期）。\n\
+            6. 项目匹配细则：\n   - “营业收入”指企业主要经营业务产生的收入，避免取到“其他业务收入”合计值之前的内部数据。\n   - “净利润”优先取“归属于母公司所有者的净利润”，若无法区分则取综合净利润。\n\
+            \   - “扣除非经常性损益后的净利润”必须取扣非后归属母公司股东的净利润（如有）。\n   - “经营活动产生的现金流量净额”对应现金流量表主表中的该科目。\n\
+            \   - “资产总计”“负债合计”取资产负债表期末余额。\n   - “应收账款期末账面价值”应提取扣除坏账准备后的账面价值，若只能取到原值，尝试寻找“应收账款”净额注释。\n\
+            \   - “存货期末账面价值”同理提取扣除跌价准备后的净值。\n   - “短期借款”取资产负债表短期借款科目期末余额。\n   - “货币资金期末余额”取货币资金总计，不含受限资金单独拆分，如有明细只取合计数。\n\
+            7. 强制提取：即使文本格式混乱、换行错位，也必须依据科目名称语义匹配，忽略表格线、空格干扰。\n\n"
+        selected: false
+        structured_output_enabled: false
+        title: LLM 1
+        type: llm
+        vision:
+          enabled: false
+      height: 87
+      id: '1779851614373'
+      position:
+        x: 240.25565782663455
+        y: 91.69586748003053
+      positionAbsolute:
+        x: 240.25565782663455
+        y: 91.69586748003053
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    viewport:
+      x: 157.1561232740848
+      y: 60.42697361413161
+      zoom: 0.834918167880437
+  rag_pipeline_variables: []
